@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pixiv-api-bypass-sni"
-version = "1.0.2"
+version = "1.0.1"
 description = "A library for the Pixiv API."
 authors = ["sekatol"]
 license = "Apache-2.0"
