@@ -5,8 +5,8 @@ from Pixiv's API.
 
 from os.path import splitext
 
-from pixivapi.common import parse_timestamp
-from pixivapi.enums import ContentType, Size
+from pixivapibypasssni.common import parse_timestamp
+from pixivapibypasssni.enums import ContentType, Size
 
 
 class User:
@@ -32,12 +32,14 @@ class User:
         name,
         profile_image_urls,
         is_followed=None,
+        is_access_blocking_user=False,
     ):
         self.account = account
         self.id = id
         self.name = name
         self.profile_image_urls = profile_image_urls
         self.is_followed = is_followed
+        self.is_access_blocking_user = is_access_blocking_user
 
     def __repr__(self):
         return f"<User id={self.id} name={self.name}>"
@@ -221,6 +223,8 @@ class Illustration:
         create_date,
         height,
         id,
+        illust_ai_type,
+        illust_book_style,
         image_urls,
         is_bookmarked,
         is_muted,
@@ -240,24 +244,30 @@ class Illustration:
         visible,
         width,
         x_restrict,
-        client=None,
+        comment_access_control=None,
         total_comments=None,
-        illust_ai_type=None,
-        illust_book_style=None,
-        comment_access_control=None
+        client=None,
+        viewed_list=[],
+        use_alt_image_site=False,
+        alt_image_site="i.pixiv.re",
     ):
         self.caption = caption
         self.create_date = parse_timestamp(create_date)
         self.height = height
         self.id = id
         self.image_urls = {
-            **{Size(s): u for s, u in image_urls.items()},
+            **{Size(s): (u.replace("i.pximg.net", alt_image_site, 1) if use_alt_image_site
+                         else u) for s, u in image_urls.items()},
             Size.ORIGINAL: meta_single_page.get("original_image_url", None),
         }
+        if use_alt_image_site and self.image_urls[Size.ORIGINAL] is not None:
+            self.image_urls[Size.ORIGINAL] = self.image_urls[Size.ORIGINAL].replace(
+                "i.pximg.net", alt_image_site, 1)
         self.is_bookmarked = is_bookmarked
         self.is_muted = is_muted
         self.meta_pages = [
-            {Size(s): u for s, u in p["image_urls"].items()} for p in meta_pages
+            {Size(s): (u.replace("i.pximg.net", alt_image_site, 1) if use_alt_image_site
+                       else u) for s, u in p["image_urls"].items()} for p in meta_pages
         ]
         self.page_count = page_count
         self.restrict = restrict
@@ -278,6 +288,7 @@ class Illustration:
         self.illust_ai_type = illust_ai_type
         self.illust_book_style = illust_book_style
         self.comment_access_control = comment_access_control 
+        self.viewed_list = viewed_list
 
     def __repr__(self):
         return f"<Illustration id={self.id} user={self.user.name}>"
@@ -321,10 +332,36 @@ class Illustration:
                 referer=referer,
             )
 
+    def related_illustrations(self, viewed_list=[], update_own_viewed_list=True):
+        """
+        Fetch related illustrations.
 
-class Novel:
+        :param viewed_list list: Viewed ID of illustrations, which will not be returned.
+            This illustration's own viewed_list will be automatically appended to this
+            list.
+        :param update_own_viewed_list: Add viewed_list responded this time to this
+            illustration's own viewed_list.
+
+        :raises requests.RequestException: If the request fails.
+        :raises BadApiResponse: If the response is not valid JSON.
+        """
+        print("viewed_list.len", len(self.viewed_list))
+        combined_viewed_list = self.viewed_list
+        for viewed in viewed_list: # Order matters.
+            if viewed not in combined_viewed_list:
+                combined_viewed_list.append(viewed)
+
+        response = self.client.fetch_illustration_related(self.id, combined_viewed_list)
+        if update_own_viewed_list:
+            # response["viewed_list"] has old items so don't use self.viewed_list.extand'
+            self.viewed_list = response["viewed_list"]
+        while len(self.viewed_list) > 100: # Prevent [400]: viewed too many items
+            self.viewed_list.pop()
+        return response
+
+class NovelDetail:
     """
-    A model that encapsulates a novel.
+    A model that encapsulates a novel detail.
 
     :ivar str caption: Caption
     :ivar datetime.datetime create_date: Creation date
@@ -366,6 +403,7 @@ class Novel:
         is_mypixiv_only,
         is_x_restricted,
         is_original,
+        novel_ai_type,
         page_count,
         restrict,
         series,
@@ -378,12 +416,16 @@ class Novel:
         user,
         visible,
         x_restrict,
+        comment_access_control=None,
         client=None,
+        use_alt_image_site=False,
+        alt_image_site="i.pixiv.re",
     ):
         self.caption = caption
         self.create_date = parse_timestamp(create_date)
         self.id = id
-        self.image_urls = {Size(s): u for s, u in image_urls.items()}
+        self.image_urls = {Size(s): (u.replace("i.pximg.net", alt_image_site) if use_alt_image_site
+                                     else u) for s, u in image_urls.items()}
         self.is_bookmarked = is_bookmarked
         self.is_muted = is_muted
         self.is_mypixiv_only = is_mypixiv_only
@@ -404,7 +446,94 @@ class Novel:
         self.client = client
 
     def __repr__(self):
-        return f"<Novel id={self.id} user={self.user.name}>"
+        return f"<NovelDetail id={self.id} user={self.user.name}>"
+
+class NovelContent:
+    """
+    A model that encapsulates a novel content and a few other information.
+    The content is usually stored in html format
+
+    :ivar int ai_type: AI type of the novel
+    :ivar str caption: The caption of the novel in html format
+    :ivar str create_date: The create date of the novel in ISO format
+    :ivar str cover_url: URL of cover image
+    :ivar list glossary_items: Glossary items of the novel
+    :ivar int id: ID of the novel
+    :ivar list illusts: Illustrations in the novel
+    :ivar list images: Images in the novel
+    :ivar is_original: Whether or not the novel is original.
+    :ivar marker: Marker of the novel
+    :ivar dict rating: likes, bookmarks, views of the novel
+    .. code-block:: python
+       dict rating
+       {
+           "like": 1, # likes of the novel
+           "bookmark": 1, # bookmarks of the novel
+           "view": 1, # views of the novel
+       }
+    :ivar list replaceable_item_ids: Replaceable item ids of the novel
+    :ivar series: If the novel is in a series, this will be a dict with the ``id`` and
+        ``title`` key/value pairs of the series. If the novel is not in a series, this
+        will be ``None``.
+    :ivar series_navigation: If hte novel is in a series, this will be the next and prev
+        of this novel if possible. If the novel is not in a series, this will be ``None``.
+    :ivar list tags: A list of str of ``translated_name``. The ``translated_name`` will
+        be ``None`` if the client language is not set.
+    :ivar str text_html: The content of the novel in html format
+    :ivar str title: The title of the novel
+    :ivar int user_id: User id of the author of the novel
+    :ivar str raw_html: The raw response of the request without parsing
+    """
+    def __init__(
+        self,
+        aiType,
+        caption,
+        cdate,
+        coverUrl,
+        glossaryItems,
+        id,
+        illusts,
+        images,
+        isOriginal,
+        marker,
+        rating,
+        replaceableItemIds,
+        seriesId,
+        seriesIsWatched, # ?
+        seriesNavigation, # ?
+        seriesTitle,
+        tags,
+        text_html,
+        title,
+        userId,
+        raw_html,
+        use_alt_image_site=False,
+        alt_image_site="i.pixiv.re",
+    ):
+        self.ai_type = aiType
+        self.caption = caption
+        self.cover_url = coverUrl.replace(
+            "i.pximg.net", alt_image_site, 1) if use_alt_image_site else coverUrl
+        self.create_date = cdate
+        self.glossary_items = glossaryItems
+        self.id = id
+        self.illusts = illusts
+        self.images = images
+        self.is_original = isOriginal
+        self.marker = marker
+        self.rating = rating
+        self.replaceable_item_ids = replaceableItemIds
+        self.series = {seriesId: seriesTitle}
+        self.series_navigation = seriesNavigation
+        self.tags = tags
+        self.text_html = text_html
+        self.title = title
+        self.user_id = userId
+
+        self.raw_html = raw_html
+
+    def __repr__(self):
+        return f"<NovelContent id={self.id} user_id={self.user_id}>"
 
 
 class Comment:

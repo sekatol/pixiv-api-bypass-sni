@@ -1,6 +1,11 @@
 Changelog
 ---------
 
+v1.0.1 fork
+^^^^^^
+
+Add sni-bypassing support by default.
+
 v1.0.0
 ^^^^^^
 

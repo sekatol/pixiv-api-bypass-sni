@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from pixivapi.common import format_bool, parse_qs, parse_timestamp, require_auth
-from pixivapi.errors import AuthenticationRequired
+from pixivapibypasssni.common import format_bool, parse_qs, parse_timestamp, require_auth
+from pixivapibypasssni.errors import AuthenticationRequired
 
 
 def test_require_auth_success():

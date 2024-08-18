@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "pixiv-api"
-version = "1.0.0"
+name = "pixiv-api-bypass-sni"
+version = "1.0.2"
 description = "A library for the Pixiv API."
-authors = ["blissful <blissful@sunsetglow.net>"]
+authors = ["sekatol"]
 license = "Apache-2.0"
 readme = "README.rst"
-repository = "https://github.com/azuline/pixiv-api"
+repository = "https://github.com/sekatol/pixiv-api-bypass-sni"
 packages = [
-    { include = "pixivapi" }
+    { include = "pixivapibypasssni" }
 ]
 
 [tool.poetry.dependencies]

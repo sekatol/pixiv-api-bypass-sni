@@ -1,6 +1,6 @@
 import responses
 
-from pixivapi import Illustration
+from pixivapibypasssni import Illustration
 from tests import mocked_responses as mr
 
 

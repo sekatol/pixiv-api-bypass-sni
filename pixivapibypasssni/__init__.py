@@ -5,8 +5,8 @@ This module re-exports the "publicly exported" API (i.e. the stuff
 we expect consumers to use and guarantee stability for).
 """
 
-from pixivapi.client import Client
-from pixivapi.enums import (
+from pixivapibypasssni.client import Client
+from pixivapibypasssni.enums import (
     ContentType,
     Duration,
     RankingMode,
@@ -15,10 +15,10 @@ from pixivapi.enums import (
     Sort,
     Visibility,
 )
-from pixivapi.errors import (
+from pixivapibypasssni.errors import (
     AuthenticationRequired,
     BadApiResponse,
     LoginError,
     PixivError,
 )
-from pixivapi.models import Account, Comment, FullUser, Illustration, Novel, User
+from pixivapibypasssni.models import Account, Comment, FullUser, Illustration, NovelDetail, User

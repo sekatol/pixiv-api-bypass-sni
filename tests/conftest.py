@@ -1,6 +1,6 @@
 import pytest
 
-from pixivapi import Client
+from pixivapibypasssni import Client
 
 
 @pytest.fixture

@@ -15,8 +15,8 @@ credentials.
 import pytest
 import responses
 
-from pixivapi import BadApiResponse, Duration, LoginError
-from pixivapi.client import AUTH_URL, BASE_URL
+from pixivapibypasssni import BadApiResponse, Duration, LoginError
+from pixivapibypasssni.client import AUTH_URL, BASE_URL
 from tests import mocked_responses as mr
 
 

@@ -5,7 +5,7 @@ To start making requests to the Pixiv API, instantiate a client object.
 
 .. code-block:: python
 
-   from pixivapi import Client
+   from pixivapibypasssni import Client
 
    client = Client()
 
@@ -35,7 +35,7 @@ image from Pixiv.
 .. code-block:: python
 
    from pathlib import Path
-   from pixivapi import Size
+   from pixivapibypasssni import Size
 
    illustration = client.fetch_illustration(75523989)
    illustration.download(
@@ -48,7 +48,7 @@ And the next code block downloads all illustrations of an artist.
 .. code-block:: python
 
    from pathlib import Path
-   from pixivapi import Size
+   from pixivapibypasssni import Size
 
    artist_id = 2188232
    directory = Path.home() / 'wlop'

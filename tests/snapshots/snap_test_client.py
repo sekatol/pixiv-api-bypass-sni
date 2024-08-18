@@ -384,9 +384,9 @@ snapshots['test_fetch_following 1'] = {
             ],
             'is_muted': False,
             'novels': [
-                GenericRepr('<Novel id=14620056 user=あいだ>'),
-                GenericRepr('<Novel id=14558775 user=あいだ>'),
-                GenericRepr('<Novel id=14508049 user=あいだ>')
+                GenericRepr('<NovelDetail id=14620056 user=あいだ>'),
+                GenericRepr('<NovelDetail id=14558775 user=あいだ>'),
+                GenericRepr('<NovelDetail id=14508049 user=あいだ>')
             ],
             'user': GenericRepr('<User id=8966556 name=あいだ>')
         }

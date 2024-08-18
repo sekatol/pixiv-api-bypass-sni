@@ -4,14 +4,14 @@ API
 Client
 ^^^^^^
 
-.. automodule:: pixivapi.client
+.. automodule:: pixivapibypasssni.client
     :members:
     :member-order: bysource
 
 Models
 ^^^^^^
 
-.. automodule:: pixivapi.models
+.. automodule:: pixivapibypasssni.models
     :members:
     :show-inheritance:
     :member-order: bysource
@@ -19,7 +19,7 @@ Models
 Enums
 ^^^^^
 
-.. automodule:: pixivapi.enums
+.. automodule:: pixivapibypasssni.enums
     :members:
     :inherited-members:
     :undoc-members:
@@ -28,7 +28,7 @@ Enums
 Exceptions
 ^^^^^^^^^^
 
-.. automodule:: pixivapi.errors
+.. automodule:: pixivapibypasssni.errors
     :members:
     :show-inheritance:
     :member-order: bysource

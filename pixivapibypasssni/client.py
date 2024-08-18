@@ -6,18 +6,24 @@ the two APIs.
 
 import hashlib
 from datetime import datetime, timezone
+import json
 from json import JSONDecodeError
+import re
 
+import ssl
+import urllib3
 import cloudscraper
 from requests import RequestException
 
-from pixivapi.common import HEADERS, format_bool, parse_qs, require_auth
-from pixivapi.enums import ContentType, RankingMode, SearchTarget, Sort, Visibility
-from pixivapi.errors import BadApiResponse, LoginError
-from pixivapi.models import Account, Comment, FullUser, Illustration, Novel, User
+from pixivapibypasssni.common import HEADERS, format_bool, parse_qs, require_auth
+from pixivapibypasssni.enums import ContentType, RankingMode, SearchTarget, Sort, Visibility
+from pixivapibypasssni.errors import BadApiResponse, LoginError
+from pixivapibypasssni.models import Account, Comment, FullUser, Illustration, NovelDetail, NovelContent, User
 
 AUTH_URL = "https://oauth.secure.pixiv.net/auth/token"
+ALT_AUTH_URL = "https://210.140.131.219/auth/token"
 BASE_URL = "https://app-api.pixiv.net"
+ALT_BASE_URL = "https://210.140.131.199"
 FILTER = "for_ios"
 
 LOGIN_SECRET = "28c1fdd170a5204386cb1313c7077b34f83e4aaf4aa829ce78c231e05b0bae2c"
@@ -42,24 +48,43 @@ class Client:
         language="English",
         client_id="KzEZED7aC0vird8jWyHM38mXjNTY",
         client_secret="W9JZoJe00qPvJsiyCGT3CCtC6ZUtdpKpzMbNlUGP",
+        use_alt_api=True,
     ):
         self.language = language
         self.client_id = client_id
         self.client_secret = client_secret
+        if use_alt_api:
+            self.client_id="MOBrBDS8blbauoSck0ZfDbtuzpyT",
+            self.client_secret="lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj",
 
         self.account = None
         self.access_token = None
         self.refresh_token = None
 
+        self.use_alt_api = use_alt_api
+
         # Using cloudscraper over a simple session allows us to
         # get around Cloudflare.
         self.session = cloudscraper.create_scraper()
+        if use_alt_api:
+            self.session = cloudscraper.CloudScraper(
+                ssl_context=ssl._create_unverified_context()
+            )
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.session.headers.update(HEADERS)
 
         if self.language:  # pragma: no cover
             self.session.headers.update({"Accept-Language": self.language})
 
-    def _request_json(self, method, url, params=None, headers=None, data=None):
+    def _request_json(
+        self,
+        method,
+        url,
+        params=None,
+        headers=None,
+        data=None,
+        verify=True
+    ):
         """
         A wrapper for JSON requests.
         """
@@ -70,7 +95,9 @@ class Client:
                 params=params,
                 headers=headers,
                 data=data,
+                verify=verify,
             )
+            print(response.text)
             if response.status_code // 100 == 4:
                 raise BadApiResponse(
                     f"Status code: {response.status_code}", response.text
@@ -92,7 +119,12 @@ class Client:
         :raises FileNotFoundError: If the destination's directory does not exist.
         :raises PermissionError: If the destination cannot be written to.
         """
-        response = self.session.get(url=url, headers={"Referer": referer}, stream=True)
+        response = self.session.get(
+            url=url,
+            headers={"Referer": referer},
+            stream=True,
+            verify=not self.use_alt_api
+        )
         with destination.open("wb") as f:
             for chunk in response.iter_content(chunk_size=1024):
                 if chunk:
@@ -142,7 +174,7 @@ class Client:
 
         try:
             response = self.session.post(
-                url=AUTH_URL,
+                url=ALT_AUTH_URL if self.use_alt_api else AUTH_URL,
                 data={
                     "client_id": self.client_id,
                     "client_secret": self.client_secret,
@@ -154,7 +186,9 @@ class Client:
                     "X-Client-Hash": hashlib.md5(
                         (client_time + LOGIN_SECRET).encode("utf-8")
                     ).hexdigest(),
+                    "host": "oauth.secure.pixiv.net" if self.use_alt_api else None,
                 },
+                verify=not self.use_alt_api,
             )
             json_ = response.json()
 
@@ -174,6 +208,8 @@ class Client:
         sort=Sort.DATE_DESC,
         duration=None,
         offset=None,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
     ):
         """
         Search the illustrations. A maximum of 30 illustrations are returned in one
@@ -184,6 +220,8 @@ class Client:
         :param Sort sort: How to sort the illustrations.
         :param Duration duration: An optional max-age for the illustrations.
         :param int offset: The number of illustrations to offset by.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the searched illustrations, the offset for the
             next page of search images (``None`` if there is no next page), and the
@@ -204,7 +242,7 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/search/illust",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/search/illust",
             params={
                 "word": word,
                 "search_target": search_target.value,
@@ -213,22 +251,36 @@ class Client:
                 "offset": offset,
                 "filter": FILTER,
             },
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
             "illustrations": [
-                Illustration(**illust, client=self) for illust in response["illusts"]
+                Illustration(
+                    **illust,
+                    client=self,
+                    use_alt_image_site=True,
+                    alt_image_site="i.pixiv.re"
+                ) for illust in response["illusts"]
             ],
             "next": parse_qs(response["next_url"], param="offset"),
             "search_span_limit": response["search_span_limit"],
         }
 
     @require_auth
-    def fetch_illustration(self, illustration_id):
+    def fetch_illustration(
+        self,
+        illustration_id,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
+    ):
         """
         Fetch the details of a single illustration.
 
         :param int illustration_id: The ID of the illustration.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: An illustration object.
         :rtype: Illustration
@@ -239,10 +291,14 @@ class Client:
         return Illustration(
             **self._request_json(
                 method="get",
-                url=f"{BASE_URL}/v1/illust/detail",
+                url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/illust/detail",
                 params={"illust_id": illustration_id},
+                headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+                verify=not self.use_alt_api,
             )["illust"],
             client=self,
+            use_alt_image_site=use_alt_image_site,
+            alt_image_site=alt_image_site,
         )
 
     @require_auth
@@ -281,12 +337,14 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/illust/comments",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/illust/comments",
             params={
                 "illust_id": illustration_id,
                 "offset": offset,
                 "include_total_comments": format_bool(include_total_comments),
             },
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
@@ -298,13 +356,21 @@ class Client:
         }
 
     @require_auth
-    def fetch_illustration_related(self, illustration_id, offset=None):
+    def fetch_illustration_related(
+        self,
+        illustration_id,
+        viewed_list=[],
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
+    ):
         """
         Fetch illustrations related to a specified illustration. A maximum of 30
         illustrations are returned in one response.
 
         :param int illustration_id: ID of the illustration.
-        :param int offset: Illustrations to offset by.
+        :param list viewed_list: Viewed ID of illustrations, which will not be returned.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the related illustrations and the offset for
         the next page of illustrations.
@@ -313,7 +379,7 @@ class Client:
 
            {
                'illustrations': [Illustration, ...],  # List of illustrations.
-               'next': 30,  # Offset to get the next page of illustrations.
+               'viewed_list': [illist_id, ...], # List of viewed illustrations.
            }
 
         :rtype: dict
@@ -321,21 +387,47 @@ class Client:
         :raises requests.RequestException: If the request fails.
         :raises BadApiResponse: If the response is not valid JSON.
         """
+        viewed_list_parsed = {}
+        for i in range(len(viewed_list)):
+            viewed_list_parsed["viewed[%d]"%i] = viewed_list[i]
+
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v2/illust/related",
-            params={"illust_id": illustration_id, "offset": offset},
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v2/illust/related",
+            params={"illust_id": illustration_id, **viewed_list_parsed},
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
+
+        i = 0
+        response_viewed_list = []
+        while True:
+            viewed = parse_qs(response["next_url"], param="viewed[%d]"%i)
+            if viewed == None:
+                break
+            response_viewed_list.append(viewed)
+            i += 1
 
         return {
             "illustrations": [
-                Illustration(**illust, client=self) for illust in response["illusts"]
+                Illustration(
+                    **illust,
+                    client=self,
+                    use_alt_image_site=use_alt_image_site,
+                    alt_image_site=alt_image_site
+                ) for illust in response["illusts"]
             ],
-            "next": parse_qs(response["next_url"], param="offset"),
+            "viewed_list": response_viewed_list,
         }
 
     @require_auth
-    def fetch_illustrations_following(self, visibility=Visibility.PUBLIC, offset=None):
+    def fetch_illustrations_following(
+        self,
+        visibility=Visibility.PUBLIC,
+        offset=None,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
+    ):
         """
         Fetch new illustrations from followed artists. A maximum of 30 illustrations are
         returned in one response.
@@ -343,6 +435,8 @@ class Client:
         :param Visibility visibility: Visibility of the followed artist; ``PUBLIC`` if
             publicly followed; ``PRIVATE`` if privately.
         :param int offset: The number of illustrations to offset by.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the new illustrations and the offset for the
             next page of illustrations.
@@ -361,13 +455,20 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v2/illust/follow",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v2/illust/follow",
             params={"restrict": visibility.value, "offset": offset},
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
             "illustrations": [
-                Illustration(**illust, client=self) for illust in response["illusts"]
+                Illustration(
+                    **illust,
+                    client=self,
+                    use_alt_image_site=use_alt_image_site,
+                    alt_image_site=alt_image_site,
+                ) for illust in response["illusts"]
             ],
             "next": parse_qs(response["next_url"], param="offset"),
         }
@@ -382,6 +483,8 @@ class Client:
         offset=None,
         bookmark_illust_ids=None,
         include_ranking_label=True,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
     ):
         """
         Fetch one's recommended illustrations.
@@ -398,6 +501,8 @@ class Client:
         :param int offset: The number of illustrations to offset by.
         :param list bookmark_illust_ids: A list of illustration IDs.
         :param bool include_ranking_label: Whether or not to include the ranking label.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the recommended illustrations and the
             parameters for the next page of illustrations.
@@ -425,7 +530,7 @@ class Client:
 
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/illust/recommended",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/illust/recommended",
             params={
                 "content_type": content_type.value,
                 "include_ranking_label": format_bool(include_ranking_label),
@@ -437,11 +542,18 @@ class Client:
                 "include_ranking_illusts": format_bool(include_ranking_illustrations),
                 "bookmark_illust_ids": bookmark_illust_ids,
             },
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
         return {
             "contest_exists": response["contest_exists"],
             "illustrations": [
-                Illustration(**illust, client=self) for illust in response["illusts"]
+                Illustration(
+                    **illust,
+                    client=self,
+                    use_alt_image_site=use_alt_image_site,
+                    alt_image_site=alt_image_site,
+                ) for illust in response["illusts"]
             ],
             "next": {
                 "min_bookmark_id_for_recent_illustrations": (
@@ -459,13 +571,24 @@ class Client:
                 "offset": parse_qs(response["next_url"], param="offset"),
             },
             "ranking_illustrations": [
-                Illustration(**illust, client=self)
-                for illust in response["ranking_illusts"]
+                Illustration(
+                    **illust,
+                    client=self,
+                    use_alt_image_site=use_alt_image_site,
+                    alt_image_site=alt_image_site,
+                ) for illust in response["ranking_illusts"]
             ],
         }
 
     @require_auth
-    def fetch_illustrations_ranking(self, mode=RankingMode.DAY, date=None, offset=None):
+    def fetch_illustrations_ranking(
+        self,
+        mode=RankingMode.DAY,
+        date=None,
+        offset=None,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
+    ):
         """
         Fetch the ranking illustrations. A maximum of 30 illusrations are returned in
         one response.
@@ -473,6 +596,8 @@ class Client:
         :param RankingMode mode: The ranking list to fetch.
         :param str date: The date of the list, in ``%Y-%m-%d`` format.
         :param int offset: The number of illustrations to offset by.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the ranking illustrations and the offset for
             the next page of illustrations.
@@ -491,26 +616,36 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/illust/ranking",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/illust/ranking",
             params={
                 "mode": mode.value,
                 "date": date,
                 "offset": offset,
                 "filter": FILTER,
             },
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
             "illustrations": [
-                Illustration(**illust, client=self) for illust in response["illusts"]
+                Illustration(
+                    **illust,
+                    client=self,
+                    use_alt_image_site=use_alt_image_site,
+                    alt_image_site=alt_image_site,
+                ) for illust in response["illusts"]
             ],
             "next": parse_qs(response["next_url"], param="offset"),
         }
 
     @require_auth
-    def fetch_trending_tags(self):
+    def fetch_trending_tags(self, use_alt_image_site=True, alt_image_site="i.pixiv.re"):
         """
         Fetch trending illustrations and tags.
+
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A list of dicts containing an illustration, the tag name, and the tag
             translation.
@@ -533,13 +668,19 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/trending-tags/illust",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/trending-tags/illust",
             params={"filter": FILTER},
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return [
             {
-                "illustration": Illustration(**trending["illust"]),
+                "illustration": Illustration(
+                    **trending["illust"],
+                    use_alt_image_site=use_alt_image_site,
+                    alt_image_site=alt_image_site,
+                ),
                 "tag": trending["tag"],
                 "translated_name": trending["translated_name"],
             }
@@ -577,8 +718,10 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v2/illust/bookmark/detail",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v2/illust/bookmark/detail",
             params={"illust_id": illustration_id},
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )["bookmark_detail"]
 
         return {
@@ -606,12 +749,13 @@ class Client:
         if tags:
             tags = " ".join(tags)
         self.session.post(
-            url=f"{BASE_URL}/v2/illust/bookmark/add",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v2/illust/bookmark/add",
             data={
                 "illust_id": illustration_id,
                 "restrict": visibility.value,
                 "tags[]": tags,
             },
+            verify=not self.use_alt_api,
         )
 
     @require_auth
@@ -624,8 +768,9 @@ class Client:
         :raises requests.RequestException: If the request fails.
         """
         self.session.post(
-            url=f"{BASE_URL}/v1/illust/bookmark/delete",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/illust/bookmark/delete",
             data={"illust_id": illustration_id},
+            verify=not self.use_alt_api,
         )
 
     @require_auth
@@ -643,8 +788,10 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/user/detail",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/user/detail",
             params={"user_id": user_id, "filter": FILTER},
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return FullUser(
@@ -660,6 +807,8 @@ class Client:
         user_id,
         content_type=ContentType.ILLUSTRATION,
         offset=None,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
     ):
         """
         Fetch the illustrations posted by a user.
@@ -668,6 +817,8 @@ class Client:
         :param ContentType content_type: The type of content to fetch. Accepts
             ``ILLUSTRATION`` and ``MANGA``.
         :param int offset: The number of illustrations/manga to offset by.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the user's illustrations and the offset to get
             the next page of their illustrations. If there is no next page, ``offset``
@@ -687,18 +838,25 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/user/illusts",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/user/illusts",
             params={
                 "user_id": user_id,
                 "type": content_type.value if content_type else None,
                 "offset": offset,
                 "filter": FILTER,
             },
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
             "illustrations": [
-                Illustration(**illust, client=self) for illust in response["illusts"]
+                Illustration(
+                    **illust,
+                    client=self,
+                    use_alt_image_site=use_alt_image_site,
+                    alt_image_site=alt_image_site,
+                ) for illust in response["illusts"]
             ],
             "next": parse_qs(response["next_url"], param="offset"),
         }
@@ -710,6 +868,8 @@ class Client:
         visibility=Visibility.PUBLIC,
         max_bookmark_id=None,
         tag=None,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
     ):
         """
         Fetch the illustrations bookmarked by a user. A maximum of 30 illustrations are
@@ -723,6 +883,8 @@ class Client:
             ``offset`` for other endpoints.
         :param str tag: The bookmark tag to filter bookmarks by. These tags can be
             fetched from ``Client.fetch_user_bookmark_tags``.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the user's bookmarks and the
             max_bookmark_id needed to get the next page of their
@@ -743,18 +905,25 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/user/bookmarks/illust",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/user/bookmarks/illust",
             params={
                 "user_id": user_id,
                 "restrict": visibility.value,
                 "max_bookmark_id": max_bookmark_id,
                 "tag": tag,
             },
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
             "illustrations": [
-                Illustration(**illust, client=self) for illust in response["illusts"]
+                Illustration(
+                    **illust,
+                    client=self,
+                    use_alt_image_site=use_alt_image_site,
+                    alt_image_site=alt_image_site,
+                ) for illust in response["illusts"]
             ],
             "next": parse_qs(response["next_url"], param="max_bookmark_id"),
         }
@@ -800,12 +969,14 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/user/bookmark-tags/illust",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/user/bookmark-tags/illust",
             params={
                 "user_id": user_id,
                 "restrict": visibility.value,
                 "offset": offset,
             },
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
@@ -814,7 +985,14 @@ class Client:
         }
 
     @require_auth
-    def fetch_following(self, user_id, visibility=Visibility.PUBLIC, offset=None):
+    def fetch_following(
+        self,
+        user_id,
+        visibility=Visibility.PUBLIC,
+        offset=None,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re",
+    ):
         """
         Fetch the users that a user is following. A maximum of 30 users are returned in
         a response.
@@ -824,6 +1002,8 @@ class Client:
             to one's own follows. If ``Visibility.PRIVATE`` is applied to another user,
             their publicly followed users will be returned.
         :param int offset: The number of users to offset by.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the a list of previews for the followed users
             and and the offset needed to get the next page of user previews. If there is
@@ -841,9 +1021,9 @@ class Client:
                        ],
                        'is_muted': False,  # Are they muted?
                        'novels': [   # Their 3 most recent novels.
-                           Novel,
-                           Novel,
-                           Novel,
+                           NovelDetail,
+                           NovelDetail,
+                           NovelDetail,
                        ],
                        'user': User,  # Basic information about the user.
                    },
@@ -859,24 +1039,30 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/user/following",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/user/following",
             params={
                 "user_id": user_id,
                 "restrict": visibility.value,
                 "offset": offset,
             },
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
             "user_previews": [
                 {
                     "illustrations": [
-                        Illustration(**illust, client=self)
-                        for illust in preview["illusts"]
+                        Illustration(
+                            **illust,
+                            client=self,
+                            use_alt_image_site=use_alt_image_site,
+                            alt_image_site=alt_image_site
+                        ) for illust in preview["illusts"]
                     ],
                     "is_muted": preview["is_muted"],
                     "novels": [
-                        Novel(**novel, client=self) for novel in preview["novels"]
+                        NovelDetail(**novel, client=self) for novel in preview["novels"]
                     ],
                     "user": User(**preview["user"]),
                 }
@@ -886,11 +1072,18 @@ class Client:
         }
 
     @require_auth
-    def fetch_followers(self, offset=None):
+    def fetch_followers(
+        self,
+        offset=None,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re"
+    ):
         """
         Fetch the users that are following the requesting user.
 
         :param int offset: The number of users to offset by.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
 
         :return: A dictionary containing the a list of previews for the users that
             follow the the requesting user and and the offset needed to get the next
@@ -909,9 +1102,9 @@ class Client:
                        ],
                        'is_muted': False,  # Are they muted?
                        'novels': [   # Preview of their novels.
-                           Novel,
-                           Novel,
-                           Novel,
+                           NovelDetail,
+                           NovelDetail,
+                           NovelDetail,
                        ],
                        'user': User,  # Basic information about the user.
                    },
@@ -927,20 +1120,26 @@ class Client:
         """
         response = self._request_json(
             method="get",
-            url=f"{BASE_URL}/v1/user/follower",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v1/user/follower",
             params={"offset": offset, "filter": FILTER},
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
         )
 
         return {
             "user_previews": [
                 {
                     "illustrations": [
-                        Illustration(**illust, client=self)
-                        for illust in preview["illusts"]
+                        Illustration(
+                            **illust,
+                            client=self,
+                            use_alt_image_site=use_alt_image_site,
+                            alt_image_site=alt_image_site
+                        ) for illust in preview["illusts"]
                     ],
                     "is_muted": preview["is_muted"],
                     "novels": [
-                        Novel(**novel, client=self) for novel in preview["novels"]
+                        NovelDetail(**novel, client=self) for novel in preview["novels"]
                     ],
                     "user": User(**preview["user"]),
                 }
@@ -948,3 +1147,63 @@ class Client:
             ],
             "next": parse_qs(response["next_url"], param="offset"),
         }
+
+    def fetch_novel_detail(
+        self,
+        novel_id,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re"
+    ):
+        """
+        Fetch the details of a single novel.
+
+        :param int novel_id: Novel ID.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
+
+        :return: A NovelDetail object
+
+        :rtype: NovelDetail
+        """
+        novel = self._request_json(
+            method="get",
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/v2/novel/detail",
+            params={"novel_id": novel_id},
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
+        )["novel"]
+        return NovelDetail(**novel, use_alt_image_site=True)
+
+    def fetch_novel(
+        self,
+        novel_id : int,
+        use_alt_image_site=True,
+        alt_image_site="i.pixiv.re"
+    ):
+        """
+        Fetch the content and other info of a single novel. The content is in html
+        format.
+
+        :param int novel_id: Novel ID.
+        :param bool use_alt_image_site: Whether or not to use alternative image site.
+        :param str alt_image_site: Alternative image site.
+
+        :return: A NovelContent object
+
+        :rtype: NovelContent
+        """
+        response = self.session.get(
+            url=f"{ALT_BASE_URL if self.use_alt_api else BASE_URL}/webview/v2/novel",
+            params={"id": novel_id},
+            headers={"host": "app-api.pixiv.net"} if self.use_alt_api else None,
+            verify=not self.use_alt_api,
+        )
+        if use_alt_image_site:
+            response.text.replace("i.pximg.net", alt_image_site, 1)
+        matchednovel = re.search("novel: {.*}", response.text)
+        if matchednovel is None:
+            raise JSONDecodeError("Novel response was failed to parse.")
+        novel = matchednovel.group().replace("novel: ", "", 1)
+        return NovelContent(**json.loads(novel), raw_html=response.text)
+
+

@@ -1,17 +1,15 @@
-=========
-pixiv-api
-=========
+====================
+pixiv-api-bypass-sni
+====================
 
-|CI| |Codecov| |Docs| |PyPI|
+|Docs| |PyPI|
 
-.. |CI| image:: https://img.shields.io/github/workflow/status/azuline/pixiv-api/CI
-   :target: https://github.com/azuline/pixiv-api/actions
-.. |Codecov| image:: https://img.shields.io/codecov/c/github/azuline/pixiv-api?token=TJSEWBI2ZC
-   :target: https://codecov.io/gh/azuline/pixiv-api
 .. |Docs| image:: https://readthedocs.org/projects/pixiv-api/badge/?version=latest
    :target: https://pixiv-api.readthedocs.io/en/latest/?badge=latest
 .. |PyPI| image:: https://img.shields.io/pypi/v/pixiv-api.svg
-   :target: https://pypi.python.org/pypi/pixiv-api
+   :target: https://pypi.org/project/pixiv-api-bypass-sni
+
+This fork of pixiv-api bypasses sni. Can be used without proxies.
 
 A documented, idiomatic, and tested wrapper library around Pixiv's App API.
 
@@ -21,16 +19,24 @@ Install with:
 
 .. code-block:: bash
 
-   $ pip install pixiv-api
+   $ pip install pixiv-api-bypass-sni
+
+Or install the downloaded package:
+
+.. code-block:: bash
+
+    # pip install path/to/pixiv_api_bypass_sni-*.whl
 
 Quickstart
 ==========
 
 To start making requests to the Pixiv API, instantiate a client object.
 
+Note: Sni bypassing is enabled by default. You can disable it by using the initiator Client(use_alt_api=False) instead of Client()
+
 .. code-block:: python
 
-   from pixivapi import Client
+   from pixivapibypasssni import Client
 
    client = Client()
 
@@ -60,7 +66,7 @@ image from Pixiv.
 .. code-block:: python
 
    from pathlib import Path
-   from pixivapi import Size
+   from pixivapibypasssni import Size
 
    illustration = client.fetch_illustration(75523989)
 
@@ -74,7 +80,7 @@ And the next code block downloads all illustrations of an artist.
 .. code-block:: python
 
    from pathlib import Path
-   from pixivapi import Size
+   from pixivapibypasssni import Size
 
    artist_id = 2188232
    directory = Path.home() / "wlop"

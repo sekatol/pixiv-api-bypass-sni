@@ -11,10 +11,10 @@ sys.path.insert(0, os.path.abspath("../"))
 
 # -- Project information
 
-project = "pixiv-api"
-copyright = "2021, blissful"
-author = "blissful"
-release = "1.0.0"
+project = "pixiv-api-bypass-sni"
+copyright = "2024, sekatol"
+author = "sekatol"
+release = "1.0.1"
 
 # -- General configuration
 
